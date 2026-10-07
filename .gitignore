@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+/data/raw
+/data/processed
+/models
+mysql_data/
+context_mysql/
