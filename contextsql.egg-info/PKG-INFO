@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: contextsql
+Version: 0.1.0
+Summary: Local, free, business-context-aware text-to-SQL agent
+Requires-Python: >=3.9
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: pymysql>=1.1
+Provides-Extra: postgres
+Requires-Dist: psycopg2-binary; extra == "postgres"

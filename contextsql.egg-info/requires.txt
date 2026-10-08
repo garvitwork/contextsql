@@ -1,0 +1,5 @@
+sqlalchemy>=2.0
+pymysql>=1.1
+
+[postgres]
+psycopg2-binary
