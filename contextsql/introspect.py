@@ -1,5 +1,6 @@
 """Read schema + profile the data (null rates, categorical values, near-duplicate spellings)."""
 import re, difflib
+from .names import singular, PREFIXES
 from sqlalchemy import inspect
 
 TEXT_HINTS = ("CHAR", "TEXT", "ENUM", "STRING", "CLOB")
@@ -85,3 +86,36 @@ def profile(engine, tables, max_distinct=30):
                     notes.append(dict(table=t, column=col, kind="values",
                                       text=f"{t}.{col} has values: {', '.join(vals)}."))
     return notes, values
+
+
+def _norm(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+def _base(table):
+    parts = [p for p in re.split(r"[_\W]+", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", table).lower()) if p]
+    if len(parts) > 1 and parts[0] in PREFIXES: parts = parts[1:]
+    return "".join(parts)
+
+def infer_joins(tables):
+    """Guess foreign keys from column names when the database does not declare them."""
+    notes = []
+    for t, meta in tables.items():
+        declared = {c for fk in meta["fks"] for c in fk["cols"]}
+        meta["fks_inferred"] = []
+        for col in meta["columns"]:
+            if col in declared or col in meta["pk"]:
+                continue
+            nc = _norm(col)
+            for p, pm in tables.items():
+                if p == t or len(pm["pk"]) != 1:
+                    continue
+                pk = pm["pk"][0]
+                cands = {_norm(singular(_base(p))) + "id", _norm(_base(p)) + "id"}
+                if _norm(pk) != "id":
+                    cands.add(_norm(pk))
+                if nc in cands:
+                    meta["fks_inferred"].append({"cols": [col], "ref_table": p, "ref_cols": [pk]})
+                    notes.append(dict(table=t, column=col, kind="join", ref_table=p,
+                                      text=f"{t}.{col} references {p}.{pk} (inferred from column names)."))
+                    break
+    return notes

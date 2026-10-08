@@ -27,6 +27,17 @@ class LlamaGenerator:
         out = self.llm(prompt, max_tokens=300, temperature=temperature, stop=[";"], echo=False)
         return out["choices"][0]["text"]
 
+def prune_ddl(meta, keep, max_cols=25):
+    """Show only relevant columns of very wide tables (keeps keys, matched columns and the first few)."""
+    if not keep or len(meta["columns"]) <= max_cols:
+        return meta["ddl"]
+    lines = meta["ddl"].split("\n")
+    head, body, tail = lines[0], lines[1:-1], lines[-1]
+    out = [l for l in body if l.strip().split(" ")[0].rstrip(",") in keep or
+           l.strip().startswith(("PRIMARY", "CONSTRAINT", "FOREIGN"))]
+    out = [l.rstrip(",") for l in out]
+    return head + "\n" + ",\n".join(out) + "\n" + tail
+
 def clean_sql(text):
     text = re.sub(r"```(?:sql)?", "", text).strip()
     return " ".join(text.split()).rstrip(";").strip() + ";"
@@ -66,9 +77,10 @@ class Agent:
         tables, notes, terms = list(sel["tables"]), list(sel["notes"]), list(sel["glossary"])
         while True:
             ctx = [f"- {k}: {gloss[k]['definition']} SQL: {gloss[k]['sql']}" for k in terms]
-            ctx += [f"- data note: {n['text']}" for n in notes if n["table"] in tables]
+            ctx += [f"- data note: {n['text']}" for n in notes if n["table"] in tables
+                    and (n["kind"] != "join" or n["ref_table"] in tables)]
             if hint: ctx.append(f"- note: {hint}")
-            schema = "\n\n".join(self.know["tables"][t]["ddl"] for t in tables)
+            schema = "\n\n".join(prune_ddl(self.know["tables"][t], sel["keep"].get(t)) for t in tables)
             prompt = build_prompt(schema, ctx, question)
             if self._count(prompt) <= MAX_PROMPT_TOKENS: break
             if len([n for n in notes if n["table"] in tables and n["kind"] == "values"]):

@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from sqlalchemy import inspect
 from . import glossary
 from .config import KNOW, save_json
-from .introspect import ddl_for, col_type, profile
+from .introspect import ddl_for, col_type, profile, infer_joins
 
 EXCLUDE_DEFAULT = {"query_log", "business_glossary"}
 
-def learn(engine, exclude=EXCLUDE_DEFAULT, say=print):
+def scan(engine, exclude=EXCLUDE_DEFAULT, say=print):
+    """Read schema + profile data. Returns (knowledge, all_table_names). Saves nothing."""
     insp = inspect(engine)
     all_tables = insp.get_table_names()
     tables = {}
@@ -26,13 +27,18 @@ def learn(engine, exclude=EXCLUDE_DEFAULT, say=print):
         say(f"  schema   {t} ({len(cols)} columns)")
     say("  profiling data ...")
     notes, values = profile(engine, tables)
+    notes += infer_joins(tables)
+    know = {"dialect": engine.dialect.name, "tables": tables, "notes": notes, "values": values,
+            "learned_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return know, all_tables
+
+def learn(engine, exclude=EXCLUDE_DEFAULT, say=print):
+    know, all_tables = scan(engine, exclude, say)
     imported = 0
     if "business_glossary" in all_tables:
         with engine.connect() as c:
             rows = c.exec_driver_sql(
                 "SELECT term, definition, sql_snippet, tables_used FROM business_glossary").fetchall()
         imported = glossary.merge_imported([tuple(r) for r in rows])
-    know = {"dialect": engine.dialect.name, "tables": tables, "notes": notes, "values": values,
-            "learned_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     save_json(KNOW, know)
     return know, imported
