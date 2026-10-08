@@ -7,3 +7,4 @@ __pycache__/
 /models
 mysql_data/
 context_mysql/
+/adapter
