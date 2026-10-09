@@ -81,3 +81,30 @@ def parse(text):
             cols.append(dict(logical=m.group(1), kind=m.group(2), args=m.group(3) or "", nullable=bool(m.group(4))))
         tables[t.strip()] = cols
     return tables
+
+
+# ---------------- v3: 25 domains x 2 naming variants = 50 databases ----------------
+from .specs_extra import EXTRA
+SPECS.update(EXTRA)
+POOL = [
+    dict(tbl="",     col="snake",    abbr=False,      pk="id",       fk_declared=True),
+    dict(tbl="tbl_", col="snake",    abbr=True,       pk="table_id", fk_declared=False),
+    dict(tbl="",     col="camel",    abbr=False,      pk="table_id", fk_declared=True),
+    dict(tbl="t_",   col="prefixed", abbr=True,       pk="id",       fk_declared=False),
+    dict(tbl="",     col="pascal",   abbr=False,      pk="table_id", fk_declared=False),
+    dict(tbl="tb_",  col="snake",    abbr="skeleton", pk="id",       fk_declared=False),
+    dict(tbl="",     col="camel",    abbr="skeleton", pk="table_id", fk_declared=False),
+    dict(tbl="mst_", col="snake",    abbr=True,       pk="table_id", fk_declared=True,  singular=True),
+    dict(tbl="",     col="prefixed", abbr=False,      pk="table_id", fk_declared=True,  singular=True),
+    dict(tbl="dim_", col="pascal",   abbr=True,       pk="id",       fk_declared=False, singular=True),
+]
+DB_STYLE, DB_DOMAIN = {}, {}
+for _i, _d in enumerate(SPECS):
+    _a = STYLES.get(_d) or POOL[_i % len(POOL)]
+    _b = POOL[(_i * 3 + 5) % len(POOL)]
+    if _b == _a: _b = POOL[(_i * 3 + 6) % len(POOL)]
+    DB_STYLE[_d], DB_DOMAIN[_d] = _a, _d
+    DB_STYLE[_d + "_b"], DB_DOMAIN[_d + "_b"] = _b, _d
+DB_KEYS = list(DB_STYLE)
+HELD_OUT_DOMAINS = {"hotel", "manufacturing", "gym", "airline", "recruiting", "nonprofit"}
+HELD_OUT = {k for k in DB_KEYS if DB_DOMAIN[k] in HELD_OUT_DOMAINS}

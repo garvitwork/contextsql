@@ -20,8 +20,9 @@ def candidates(meta):
     """Yield dicts: family, variants (list of question strings), sql, tables (physical), used (table.col list)."""
     TB = meta["tables"]
     out = []
-    def add(family, variants, sql, tables, used=()):
-        out.append(dict(family=family, variants=variants, sql=sql, tables=tables, used=list(used)))
+    def add(family, variants, sql, tables, used=(), extra=False, req=()):
+        out.append(dict(family=family, variants=variants, sql=sql, tables=tables, used=list(used),
+                        extra=extra, req=list(req), terms=[]))
 
     for lt, T in TB.items():
         p, pl, sg = T["phys"], T["label_pl"], T["label_sg"]
@@ -49,6 +50,13 @@ def candidates(meta):
             for k in (3, 5, 10):
                 add("top_n", [f"Top {k} {pl} by {n['label']}", f"Which {k} {pl} have the highest {n['label']}?", f"List the {k} {pl} with the largest {n['label']}"],
                     f"SELECT {_disp(T)}, {n['phys']} FROM {p} ORDER BY {n['phys']} DESC LIMIT {k}", [p])
+        attrs_t = [a for a in T["cols"] if a["kind"] in ("cat", "city", "email") and a["phys"] != _disp(T)]
+        for n in _num(T)[:2]:
+            for a1, a2 in list(itertools.combinations(attrs_t, 2))[:3]:
+                for k in (3, 5):
+                    add("top_n_with", [f"Top {k} {pl} by {n['label']} with their {a1['label']} and {a2['label']}",
+                                       f"give top {k} {pl} with highest {n['label']} with {a1['label']} and {a2['label']}"],
+                        f"SELECT {_disp(T)}, {a1['phys']}, {a2['phys']}, {n['phys']} FROM {p} ORDER BY {n['phys']} DESC LIMIT {k}", [p], extra=True, req=[a1['phys'], a2['phys']])
         for c in T["cols"]:
             if c["nullable"]:
                 add("null_count", [f"How many {pl} have no {c['label']}?", f"Number of {pl} missing a {c['label']}", f"Count {pl} without {c['label']}"],
@@ -80,6 +88,19 @@ def candidates(meta):
                 for v in pc["args"].split("|")[:3]:
                     add("join_filter", [f"How many {pl} belong to {P['label_pl']} with {pc['label']} {_v(v)}?", f"Count {pl} of {P['label_pl']} whose {pc['label']} is {_v(v)}"],
                         f"SELECT COUNT(*) FROM {p} c JOIN {pp} p ON {on} WHERE p.{pc['phys']} = '{v}'", [p, pp], [f"{pp}.{pc['phys']}"])
+            attrs = [a for a in P["cols"] if a["kind"] in ("cat", "city", "email") and a["phys"] != _disp(P)]
+            for n in _num(T)[:2]:
+                for a1, a2 in list(itertools.combinations(attrs, 2))[:3]:
+                    for k in (3, 5, 10):
+                        add("join_top_sum_with", [f"Top {k} {P['label_pl']} by total {n['label']} of {pl} with their {a1['label']} and {a2['label']}",
+                                                  f"give top {k} {P['label_pl']} with highest {n['label']} of {pl} with {a1['label']} and {a2['label']}"],
+                            f"SELECT p.{_disp(P)}, p.{a1['phys']}, p.{a2['phys']}, ROUND(SUM(c.{n['phys']}),2) AS total FROM {p} c JOIN {pp} p ON {on} GROUP BY p.{P['pk']}, p.{_disp(P)}, p.{a1['phys']}, p.{a2['phys']} ORDER BY total DESC LIMIT {k}",
+                            [p, pp], extra=True, req=[a1['phys'], a2['phys']])
+                for a1, a2 in list(itertools.combinations(attrs, 2))[:2]:
+                    add("join_top1_with", [f"Which {P['label_sg']} has the highest total {n['label']} of {pl}, and what is their {a1['label']} and {a2['label']}?",
+                                           f"which {P['label_sg']} has highest {n['label']} of {pl} in which {a1['label']} and {a2['label']}"],
+                        f"SELECT p.{_disp(P)}, p.{a1['phys']}, p.{a2['phys']}, ROUND(SUM(c.{n['phys']}),2) AS total FROM {p} c JOIN {pp} p ON {on} GROUP BY p.{P['pk']}, p.{_disp(P)}, p.{a1['phys']}, p.{a2['phys']} ORDER BY total DESC LIMIT 1",
+                        [p, pp], extra=True, req=[a1['phys'], a2['phys']])
             # two-hop: grandchild -> child -> parent
             for g_lt, G in TB.items():
                 for gc in G["cols"]:

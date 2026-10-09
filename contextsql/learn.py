@@ -1,7 +1,7 @@
 """One-time scan: schema + data profile + glossary import -> ~/.contextsql/knowledge.json"""
 from datetime import datetime, timezone
 from sqlalchemy import inspect
-from . import glossary
+from . import glossary, autoglossary
 from .config import KNOW, save_json
 from .introspect import ddl_for, col_type, profile, infer_joins
 
@@ -30,6 +30,10 @@ def scan(engine, exclude=EXCLUDE_DEFAULT, say=print):
     notes += infer_joins(tables)
     know = {"dialect": engine.dialect.name, "tables": tables, "notes": notes, "values": values,
             "learned_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    try:
+        know["autogloss"] = autoglossary.build_verified(know, engine)
+    except Exception:
+        know["autogloss"] = {}
     return know, all_tables
 
 def learn(engine, exclude=EXCLUDE_DEFAULT, say=print):

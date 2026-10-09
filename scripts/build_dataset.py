@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pymysql
 from dotenv import load_dotenv
 from src.sql_templates import TEMPLATES, NOTES
+from contextsql.phrasing import paraphrase, typo
 
 load_dotenv()
 ap = argparse.ArgumentParser()
@@ -85,7 +86,7 @@ for idx, t in enumerate(TEMPLATES):
         sql = norm_sql(t["sql"].format(**slots))
         if not runs_ok(sql): dropped += 1; continue
         for st in rng.sample(STYLES, args.styles):
-          q = st(q0)
+          q = typo(st(paraphrase(q0, rng, bool(t.get('req')))), rng)
           tabs = list(t["tables"]); extra = [x for x in BIZ_TABLES if x not in tabs]
           if extra and rng.random() < 0.4: tabs.append(rng.choice(extra))
           tabs.sort(key=BIZ_TABLES.index)
@@ -94,6 +95,7 @@ for idx, t in enumerate(TEMPLATES):
           ctx += [f"- data note: {NOTES[k]}" for k in t["notes"]]
           for k in rng.sample([g for g in GLOSS if g not in t["terms"]], rng.randint(0, 2)):
               ctx.append(f"- {k}: {GLOSS[k]['definition']} SQL: {GLOSS[k]['sql_snippet']}")
+          if t.get('req'): ctx.append('- requested columns: ' + ', '.join(t['req']))
           rng.shuffle(ctx)
           business.append(dict(prompt=prompt(schema, ctx, q), completion=sql, source="business",
                                template=t["id"], held_out=(idx % 5 == 0)))

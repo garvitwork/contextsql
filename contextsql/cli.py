@@ -42,7 +42,7 @@ def cmd_learn(a):
     know, imported = learn(get_engine(cfg["url"]))
     rows = sum(t.get("rows", 0) for t in know["tables"].values())
     print(f"\nDone: {len(know['tables'])} tables, {rows:,} rows scanned, {len(know['notes'])} data notes, "
-          f"{imported} glossary terms imported.")
+          f"{len(know.get('autogloss', {}))} auto glossary terms, {imported} glossary terms imported.")
     for n in know["notes"][:6]:
         print("  -", n["text"])
     if not gl.load():
@@ -53,6 +53,8 @@ def cmd_learn(a):
 
 def show(r):
     print(f"\nSQL ({r.attempts} attempt{'s' if r.attempts != 1 else ''}, {r.latency_ms} ms; tables: {', '.join(r.tables)}):\n  {r.sql}")
+    if r.confidence == "low":
+        print("  (low confidence - please check the SQL above, or rephrase / add a glossary term)")
     if not r.ok:
         print(f"\nCould not answer: {r.error}"); return
     if not r.rows:
@@ -72,7 +74,7 @@ def cmd_ask(a):
     if not cfg.get("model") or not Path(cfg["model"]).exists():
         sys.exit("Model file not found. Run: contextsql connect --model path\\to\\contextsql-q4_k_m.gguf")
     print("Loading model ...")
-    agent = Agent(get_engine(cfg["url"]), know, LlamaGenerator(cfg["model"]))
+    agent = Agent(get_engine(cfg["url"]), know, LlamaGenerator(cfg["model"], threads=a.threads))
     q = " ".join(a.question).strip()
     if q:
         show(agent.ask(q)); return
@@ -90,8 +92,10 @@ def cmd_glossary(a):
     elif a.action == "remove":
         print("Removed." if gl.remove(a.term) else "Not found.")
     else:
-        for k, g in gl.load().items():
-            print(f"- {k}: {g['definition']}\n    SQL: {g['sql']}  tables: {', '.join(g['tables'])}")
+        auto = (load_json(KNOW) or {}).get("autogloss", {})
+        for k, g in {**auto, **gl.load()}.items():
+            tag = " (auto)" if k in auto and k not in gl.load() else ""
+            print(f"- {k}{tag}: {g['definition']}\n    SQL: {g['sql']}  tables: {', '.join(g['tables'])}")
 
 def cmd_status(a):
     cfg, know = load_json(CONFIG), load_json(KNOW)
@@ -108,7 +112,7 @@ def main(argv=None):
     c.add_argument("--host"); c.add_argument("--port", type=int); c.add_argument("--user")
     c.add_argument("--password"); c.add_argument("--db"); c.add_argument("--model")
     s.add_parser("learn").set_defaults(fn=cmd_learn)
-    k = s.add_parser("ask"); k.add_argument("question", nargs="*"); k.set_defaults(fn=cmd_ask)
+    k = s.add_parser("ask"); k.add_argument("question", nargs="*"); k.add_argument("--threads", type=int); k.set_defaults(fn=cmd_ask)
     g = s.add_parser("glossary"); g.set_defaults(fn=cmd_glossary)
     g.add_argument("action", choices=["add", "list", "remove"], nargs="?", default="list")
     g.add_argument("term", nargs="?"); g.add_argument("definition", nargs="?"); g.add_argument("sql", nargs="?")

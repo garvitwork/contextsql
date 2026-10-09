@@ -3,7 +3,7 @@ import random, re
 from datetime import date, timedelta
 import pymysql
 from contextsql.names import FULL2ABBR, singular
-from .specs import SPECS, STYLES, DB_PREFIX, parse
+from .specs import SPECS, DB_STYLE, DB_DOMAIN, DB_PREFIX, parse
 
 FIRST = "Alex Priya Rahul Maria Chen Omar Sofia Liam Aisha Noah Elena Raj Yuki Ivan Zara Leo Nina Sam Tara Kofi".split()
 LAST = "Rao Smith Khan Garcia Wang Ali Kim Brown Patel Silva Novak Sato Jones Singh Lopez Meyer Ito Cruz Das Roy".split()
@@ -11,27 +11,38 @@ ADJ = "Blue Prime Rapid Solid Bright Grand Swift Noble Urban Alpha Delta Omega S
 NOUN = "Harbor Summit Forge Meadow Bridge Tower Grove Vector Anchor Ridge Orbit Canyon Beacon Atlas Pixel".split()
 CITIES = "Delhi Mumbai Pune London Leeds Berlin Austin Boston Tokyo Lagos Paris Toronto".split()
 
-def _abbr_tok(tok, on):
-    return FULL2ABBR.get(singular(tok), tok) if on else tok
+def _abbr(tok, mode):
+    if not mode:
+        return tok
+    a = FULL2ABBR.get(tok) or FULL2ABBR.get(singular(tok))
+    if a:
+        return a
+    if mode == "skeleton" and len(tok) >= 5:
+        return tok[0] + re.sub(r"[aeiou]", "", tok[1:])
+    return tok
 
 def phys_table(logical, st):
     toks = logical.split("_")
-    if st["abbr"]:
-        toks = [FULL2ABBR.get(singular(t), t) for t in toks]
+    if st.get("singular") and not st["abbr"]:
+        toks[-1] = singular(toks[-1])
+    toks = [_abbr(t, st["abbr"]) for t in toks]
     return st["tbl"] + "_".join(toks)
 
 def style_name(tokens, st, table_prefix=None):
-    toks = [FULL2ABBR.get(t, t) if st["abbr"] else t for t in tokens]
+    toks = [_abbr(t, st["abbr"]) for t in tokens]
     if st["col"] == "camel":
         return toks[0] + "".join(t.capitalize() for t in toks[1:])
+    if st["col"] == "pascal":
+        return "".join(t.capitalize() for t in toks)
     name = "_".join(toks)
     if st["col"] == "prefixed" and table_prefix:
         return f"{table_prefix}_{name}"
     return name
 
-def build_meta(domain):
-    st, spec = STYLES[domain], parse(SPECS[domain])
-    meta = {"domain": domain, "db": DB_PREFIX + domain, "style": st, "tables": {}}
+def build_meta(key):
+    domain = DB_DOMAIN[key]
+    st, spec = DB_STYLE[key], parse(SPECS[domain])
+    meta = {"domain": domain, "key": key, "db": DB_PREFIX + key, "style": st, "tables": {}}
     for lt, cols in spec.items():
         sg = [singular(w) for w in lt.split("_")]
         prefix = FULL2ABBR.get(sg[0], sg[0][:4])
@@ -71,9 +82,9 @@ def _value(c, rng, n_parent):
     if k == "flag": return int(rng.random() < 0.6)
     if k == "fk": return rng.randint(1, n_parent)
 
-def create_database(conn, domain, seed=7):
-    rng = random.Random(f"{seed}-{domain}")
-    meta = build_meta(domain); st = meta["style"]
+def create_database(conn, key, seed=7):
+    rng = random.Random(f"{seed}-{key}")
+    meta = build_meta(key); st = meta["style"]
     cur = conn.cursor()
     cur.execute(f"DROP DATABASE IF EXISTS {meta['db']}"); cur.execute(f"CREATE DATABASE {meta['db']}")
     cur.execute(f"USE {meta['db']}")

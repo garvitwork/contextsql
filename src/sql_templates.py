@@ -17,9 +17,9 @@ NOTES = {
 
 TEMPLATES = []
 
-def add(tid, questions, sql, tables, terms=(), notes=()):
+def add(tid, questions, sql, tables, terms=(), notes=(), req=()):
     TEMPLATES.append(dict(id=tid, questions=questions, sql=sql, tables=list(tables),
-                          terms=list(terms), notes=list(notes)))
+                          terms=list(terms), notes=list(notes), req=list(req)))
 
 RT = ["valid order", "revenue"]
 OO = ["orders", "order_items"]
@@ -139,3 +139,54 @@ add("discounted_orders", ["How many orders had a discount?", "Number of orders w
 add("orders_per_channel", ["How many orders per channel?", "Order count by sales channel", "Show number of orders for each channel"],
     "SELECT COALESCE(channel,'unknown') AS channel, COUNT(*) AS orders FROM orders GROUP BY COALESCE(channel,'unknown') ORDER BY orders DESC",
     ["orders"], [], ["channel"])
+
+
+# ---- "with extra columns" requests (customers) ----
+for _cols in [("country", "email"), ("city", "country"), ("segment", "email"), ("segment", "country", "city"), ("email", "city")]:
+    _nl = ", ".join(_cols[:-1]) + " and " + _cols[-1]
+    _cs = ", ".join(f"c.{x}" for x in _cols)
+    add("top_cust_with_" + "_".join(_cols),
+        [f"Top {{n}} customers by revenue with their {_nl}", f"give top {{n}} customers with highest revenue with {_nl}",
+         f"List the {{n}} biggest customers by revenue including {_nl}"],
+        f"SELECT c.customer_id, c.name, {_cs}, ROUND({REV},2) AS revenue {J_OC} WHERE {VALID} GROUP BY c.customer_id, c.name, {_cs} ORDER BY revenue DESC LIMIT {{n}}",
+        ["customers"] + OO, RT, ["status", "contact"], list(_cols))
+add("top1_customer_loc",
+    ["Which customer has the highest revenue and in which city and country?", "which customer has highest revenue in which city and country",
+     "Who is our best customer by revenue, and where are they from (city and country)?"],
+    f"SELECT c.customer_id, c.name, c.city, c.country, ROUND({REV},2) AS revenue {J_OC} WHERE {VALID} GROUP BY c.customer_id, c.name, c.city, c.country ORDER BY revenue DESC LIMIT 1",
+    ["customers"] + OO, RT, ["status", "contact"], ["city", "country"])
+add("top_products_with_cat", ["Top {n} products by revenue with their category", "give top {n} products with highest revenue with category"],
+    f"SELECT p.product_id, p.name, p.category, ROUND({REV},2) AS revenue {J_OP} WHERE {VALID} GROUP BY p.product_id, p.name, p.category ORDER BY revenue DESC LIMIT {{n}}",
+    ["products"] + OO, RT, ["status"], ["category"])
+
+
+# ---- more glossary-driven business questions ----
+V = ["valid order"]
+add("units_total", ["How many units have we sold?", "Total units sold", "Number of items sold so far"],
+    f"SELECT SUM(oi.quantity) AS units_sold {J_OI} WHERE {VALID}", OO, V + ["units sold"], ["status"])
+add("units_by_category", ["Units sold by category", "How many units did each category sell?", "Show units sold per product category"],
+    f"SELECT p.category, SUM(oi.quantity) AS units_sold {J_OP} WHERE {VALID} GROUP BY p.category ORDER BY units_sold DESC",
+    ["products"] + OO, V + ["units sold"], ["status"])
+add("discount_total", ["How much discount have we given?", "Total discount given", "What is the total discount amount?"],
+    f"SELECT ROUND(SUM(oi.quantity * oi.unit_price * COALESCE(oi.discount_pct,0) / 100),2) AS discount_given {J_OI} WHERE {VALID}",
+    OO, V + ["discount given"], ["status", "discount"])
+add("discount_by_category", ["Discount given by category", "How much discount did each category get?"],
+    f"SELECT p.category, ROUND(SUM(oi.quantity * oi.unit_price * COALESCE(oi.discount_pct,0) / 100),2) AS discount_given {J_OP} WHERE {VALID} GROUP BY p.category ORDER BY discount_given DESC",
+    ["products"] + OO, V + ["discount given"], ["status", "discount"])
+add("gross_total", ["What is our gross revenue?", "Gross revenue before discounts", "Total revenue before discount"],
+    f"SELECT ROUND(SUM(oi.quantity * oi.unit_price),2) AS gross_revenue {J_OI} WHERE {VALID}", OO, V + ["gross revenue"], ["status"])
+add("gross_by_country", ["Gross revenue by country", "Which countries have the highest gross revenue?"],
+    f"SELECT c.country, ROUND(SUM(oi.quantity * oi.unit_price),2) AS gross_revenue {J_OC} WHERE {VALID} GROUP BY c.country ORDER BY gross_revenue DESC",
+    ["customers"] + OO, V + ["gross revenue"], ["status"])
+add("repeat_count", ["How many repeat customers do we have?", "Number of repeat customers", "Count customers who ordered more than once"],
+    f"SELECT COUNT(*) AS repeat_customers FROM (SELECT o.customer_id FROM orders o WHERE {VALID} GROUP BY o.customer_id HAVING COUNT(DISTINCT o.order_id) >= 2) t",
+    ["orders"], V + ["repeat customer"], ["status"])
+add("repeat_list", ["Top {n} repeat customers by number of orders", "Which {n} customers have ordered the most times?", "List {n} repeat customers with the most orders"],
+    f"SELECT c.customer_id, c.name, COUNT(DISTINCT o.order_id) AS orders FROM customers c JOIN orders o ON o.customer_id = c.customer_id WHERE {VALID} GROUP BY c.customer_id, c.name HAVING COUNT(DISTINCT o.order_id) >= 2 ORDER BY orders DESC LIMIT {{n}}",
+    ["customers", "orders"], V + ["repeat customer"], ["status"])
+add("new_customers", ["How many new customers did we get recently?", "Number of new customers", "Count new customers"],
+    f"SELECT COUNT(*) AS new_customers FROM (SELECT o.customer_id FROM orders o WHERE {VALID} GROUP BY o.customer_id HAVING MIN(o.order_date) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)) t",
+    ["orders"], V + ["new customer"], ["status"])
+add("items_per_order", ["What is the average number of items per order?", "Items per order", "How many items does a typical order have?"],
+    f"SELECT ROUND(SUM(oi.quantity) / COUNT(DISTINCT o.order_id),2) AS items_per_order {J_OI} WHERE {VALID}",
+    OO, V + ["items per order"], ["status"])

@@ -28,8 +28,15 @@ def name_alts(name):
         out.append(alt)
     return out
 
+def skel(w):
+    return w[0] + re.sub(r"[aeiou]", "", w[1:])
+
 def tok_match(t, w):
-    return t == w or (len(t) >= 4 and len(w) >= 4 and (w.startswith(t) or t.startswith(w)))
+    if t == w:
+        return True
+    if len(t) >= 4 and len(w) >= 4 and (w.startswith(t) or t.startswith(w)):
+        return True
+    return len(t) >= 4 and len(w) >= 5 and skel(w) == t      # cstmr == skeleton of "customer"
 
 def hit(alts, q):
     return bool(alts) and all(any(tok_match(t, w) for t in alt for w in q) for alt in alts)
