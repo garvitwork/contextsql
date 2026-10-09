@@ -9,3 +9,4 @@ mysql_data/
 context_mysql/
 /adapter
 kaggle_api.png
+"*.safetensors" 
