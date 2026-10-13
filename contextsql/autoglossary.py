@@ -143,6 +143,15 @@ def build(know, labels=None):
                 E.setdefault(term, dict(kind="outcome", term=term, table=t, col=col, value=v, tpl=tpl, sql=tpl.format(a="t"),
                                         tables=[t], definition=f"Percentage of {L.tbl(t)[1]} whose {L.col(t, col)} is {v}."))
                 break
+    for t, m in T.items():                                    # 6) soft delete -> "current" records
+        for col in m["columns"]:
+            if "deleted" in _flat(col) and col not in _keys(m):
+                sg, _ = L.tbl(t); term = f"current {sg}"
+                fl = _flag(m, col)
+                tpl = ("{a}.%s = 0" if fl else "{a}.%s IS NULL") % col
+                E[term] = dict(kind="current", term=term, table=t, col=col, tpl=tpl, sql=tpl.format(a="t"), tables=[t],
+                               definition=f"A {sg} that has not been deleted ({L.col(t, col)} {'is 0' if fl else 'is empty'}).")
+                break
     return E
 
 def probe_sql(e):
@@ -240,6 +249,18 @@ def examples(know, labels, entries):
             for c2 in cat_cols(know, P)[:2]:
                 add("gl_active_group", [f"Active {ppl} by {L.col(P, c2)}", f"How many active {ppl} per {L.col(P, c2)}?"],
                     f"SELECT p.{c2}, COUNT(DISTINCT p.{pk}) AS active {base} GROUP BY p.{c2} ORDER BY active DESC", [P, C], [term], [f"{P}.{c2}"])
+        elif k == "current":
+            f = e["tpl"].format(a="t"); m = T[t]
+            add("gl_current_count", [f"How many current {pl} do we have?", f"Number of {pl} that are not deleted", f"Count the active {pl} records"],
+                f"SELECT COUNT(*) FROM {t} t WHERE {f}", [t], [term])
+            add("gl_deleted_count", [f"How many {pl} have been deleted?", f"Number of deleted {pl}"],
+                f"SELECT COUNT(*) FROM {t} t WHERE NOT ({f})", [t], [term])
+            for c in cat_cols(know, t)[:2]:
+                add("gl_current_group", [f"Number of current {pl} per {L.col(t, c)}", f"{L.col(t, c)} wise count of current {pl}"],
+                    f"SELECT t.{c}, COUNT(*) AS n FROM {t} t WHERE {f} GROUP BY t.{c} ORDER BY n DESC", [t], [term], [f"{t}.{c}"])
+            for n in [c for c in m["columns"] if _is(m, c, NUM) and not _flag(m, c) and c not in _keys(m)][:1]:
+                add("gl_current_sum", [f"Total {L.col(t, n)} of current {pl}", f"What is the total {L.col(t, n)} across current {pl}?"],
+                    f"SELECT ROUND(SUM(t.{n}),2) AS total FROM {t} t WHERE {f}", [t], [term])
         elif k == "outcome":
             v, col = e["value"], e["col"]; vtxt = v.replace("_", " ")
             add("gl_outcome_pct", [f"What percentage of {pl} are {vtxt}?", f"Share of {pl} that are {vtxt}", f"What is the {vtxt} rate of {pl}?"],

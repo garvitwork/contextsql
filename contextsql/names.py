@@ -22,6 +22,7 @@ ABBR2FULL.update({"cus": "customer", "acc": "account", "desc": "description", "t
 PREFIXES = {"tbl", "t", "tb", "mst", "dim"}
 
 def singular(w):
+    if w.endswith("statuses"): return w[:-2]
     if w.endswith("ies") and len(w) > 4: return w[:-3] + "y"
     if w.endswith("sses"): return w[:-2]
     if w.endswith("s") and not w.endswith("ss") and len(w) > 3: return w[:-1]

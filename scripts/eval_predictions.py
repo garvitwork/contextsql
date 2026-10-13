@@ -12,7 +12,7 @@ load_dotenv()
 files = [a for a in sys.argv[1:] if not a.startswith("--")]
 LENIENT = "--lenient" in sys.argv
 LIMIT = int(next((a.split('=')[1] for a in sys.argv if a.startswith('--limit=')), 10**9))
-assert len(files) == 2, __doc__
+assert len(files) in (1, 2), __doc__
 CONNS = {}
 
 def cursor(db):
@@ -42,6 +42,8 @@ def norm_rows(rows, ordered):
 def norm_text(s): return re.sub(r"\s+", "", s.lower()).rstrip(";")
 
 def correct(r):
+    if r["gold"].startswith("-- UNANSWERABLE"):
+        return r["pred"].strip().upper().startswith("-- UNANSWERABLE")
     if r["source"] in ("business", "synthetic"):
         db = r.get("db") or os.getenv("MYSQL_DB")
         g, p = fetch(db, r["gold"]), fetch(db, r["pred"])
@@ -66,19 +68,22 @@ def score(path):
             per_db[r["db"]][0] += correct(r); per_db[r["db"]][1] += 1
     return res, per_db
 
-(b, bdb), (f, fdb) = score(files[0]), score(files[1])
-print(f"{'':12}{'base model':>12}{'fine-tuned':>12}{'gain':>8}")
+single = len(files) == 1
+f, fdb = score(files[-1])
+b, bdb = (f, fdb) if single else score(files[0])
+print(f"{'':12}{'' if single else f'{chr(98)}ase model'.rjust(12)}{'fine-tuned':>12}" + ("" if single else f"{'gain':>8}"))
 for k in ["business", "synthetic", "base", "all"]:
-    print(f"{k:12}{b[k]:11.1f}%{f[k]:11.1f}%{f[k]-b[k]:+7.1f}")
+    print(f"{k:12}" + ("" if single else f"{b[k]:11.1f}%") + f"{f[k]:11.1f}%" + ("" if single else f"{f[k]-b[k]:+7.1f}"))
 print("\nper unseen database (execution accuracy):")
 for db in sorted(fdb):
     fa, ft = fdb[db]; ba, bt = bdb[db]
-    print(f"  {db:22} base {100*ba/bt:5.1f}%   fine-tuned {100*fa/ft:5.1f}%   ({ft} questions)")
-print("\nGOAL: fine-tuned beats base by 15+ pts on unseen databases:", "PASS" if f["synthetic"] - b["synthetic"] >= 15 else "NOT YET")
+    print(f"  {db:30} " + ("" if single else f"base {100*ba/bt:5.1f}%   ") + f"fine-tuned {100*fa/ft:5.1f}%   ({ft} questions)")
+if not single:
+    print("\nGOAL: fine-tuned beats base by 15+ pts on unseen databases:", "PASS" if f["synthetic"] - b["synthetic"] >= 15 else "NOT YET")
 if "--log" in sys.argv:
     import dagshub, mlflow
     dagshub.init(repo_owner=os.environ["DAGSHUB_USER"], repo_name=os.environ["DAGSHUB_REPO"], mlflow=True)
     mlflow.set_experiment("contextsql-eval")
-    with mlflow.start_run(run_name="test-set-eval-v2"):
-        for k in b: mlflow.log_metric(f"base_{k}_acc", b[k]); mlflow.log_metric(f"ft_{k}_acc", f[k])
+    with mlflow.start_run(run_name="test-set-eval"):
+        for k in f: mlflow.log_metric(f"ft_{k}_acc", f[k])
         for db in fdb: mlflow.log_metric(f"ft_{db}_acc", 100 * fdb[db][0] / fdb[db][1])

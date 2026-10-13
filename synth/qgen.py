@@ -3,7 +3,7 @@ import itertools
 
 def _disp(T):
     for c in T["cols"]:
-        if c["kind"] in ("name", "label"):
+        if c["kind"] in ("name", "label", "seq"):
             return c["phys"]
     return T["pk"]
 
@@ -25,6 +25,8 @@ def candidates(meta):
                         extra=extra, req=list(req), terms=[]))
 
     for lt, T in TB.items():
+        if any(c["kind"] == "seq" for c in T["cols"]):      # lookup table: only used through joins
+            continue
         p, pl, sg = T["phys"], T["label_pl"], T["label_sg"]
         add("count_all", [f"How many {pl} are there?", f"Total number of {pl}", f"Count of {pl}"],
             f"SELECT COUNT(*) FROM {p}", [p])
@@ -124,7 +126,7 @@ def generate(meta, engine, rng, per_family=7):
             for it in items:
                 if kept >= per_family: break
                 try:
-                    rows = c.exec_driver_sql(it["sql"]).fetchall()
+                    rows = c.exec_driver_sql(it["sql"].replace("%", "%%")).fetchall()
                 except Exception:
                     continue
                 if not rows or all(v is None for v in rows[0]): continue

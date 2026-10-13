@@ -29,3 +29,8 @@ git push -u origin main && dvc push
 - `check_db.py` shows 500/60/5000 rows and messy statuses
 - MLflow smoke-test run visible on DagHub
 - base dataset tracked by DVC and pushed
+
+
+Windows users: if pip install contextsql fails while building llama-cpp-python, they should first run:
+
+pip install llama-cpp-python --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu

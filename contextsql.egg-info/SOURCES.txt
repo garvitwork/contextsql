@@ -2,12 +2,17 @@ README.md
 pyproject.toml
 contextsql/__init__.py
 contextsql/agent.py
+contextsql/autoglossary.py
 contextsql/cli.py
 contextsql/config.py
 contextsql/db.py
+contextsql/feedback.py
 contextsql/glossary.py
+contextsql/hints.py
 contextsql/introspect.py
 contextsql/learn.py
+contextsql/names.py
+contextsql/phrasing.py
 contextsql/prompt.py
 contextsql/retrieve.py
 contextsql.egg-info/PKG-INFO
@@ -16,3 +21,5 @@ contextsql.egg-info/dependency_links.txt
 contextsql.egg-info/entry_points.txt
 contextsql.egg-info/requires.txt
 contextsql.egg-info/top_level.txt
+tests/test_agent.py
+tests/test_scale.py

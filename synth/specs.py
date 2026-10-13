@@ -108,3 +108,20 @@ for _i, _d in enumerate(SPECS):
 DB_KEYS = list(DB_STYLE)
 HELD_OUT_DOMAINS = {"hotel", "manufacturing", "gym", "airline", "recruiting", "nonprofit"}
 HELD_OUT = {k for k in DB_KEYS if DB_DOMAIN[k] in HELD_OUT_DOMAINS}
+
+
+# ---------------- v4: soft deletes + lookup-coded statuses ----------------
+SOFT_DELETE = ["hr", "school", "saas", "ecommerce", "telecom", "insurance", "hotel"]
+for _d in SOFT_DELETE:
+    _l = SPECS[_d].split("\n"); _l[0] += ", deleted_at:softdel(2)"; SPECS[_d] = "\n".join(_l)
+_LOOKUPS = [
+ ("ecommerce", "orders: customer_id:fk(customers), order_date:date(2), status:cat(shipped|delivered|pending|cancelled|returned), channel:cat(web|app|store)?",
+  "order_statuses: name:seq(shipped|delivered|pending|cancelled|returned)\norders: customer_id:fk(customers), order_date:date(2), status_id:fk(order_statuses), channel:cat(web|app|store)?"),
+ ("telecom", "subscribers: name:name, city:city, plan_id:fk(plans), joined_date:date(5), status:cat(active|suspended|churned)",
+  "subscriber_statuses: name:seq(active|suspended|churned)\nsubscribers: name:name, city:city, plan_id:fk(plans), joined_date:date(5), status_id:fk(subscriber_statuses)"),
+ ("events", "tickets: event_id:fk(events), attendee_id:fk(attendees), price:money(5-500), purchase_date:date(2), status:cat(valid|refunded|used)",
+  "ticket_statuses: name:seq(valid|refunded|used)\ntickets: event_id:fk(events), attendee_id:fk(attendees), price:money(5-500), purchase_date:date(2), status_id:fk(ticket_statuses)"),
+]
+for _d, _old, _new in _LOOKUPS:
+    assert _old in SPECS[_d], _d
+    SPECS[_d] = SPECS[_d].replace(_old, _new)

@@ -2,13 +2,14 @@
 import os, re, time, json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from . import glossary as gl
+from . import feedback, glossary as gl
 from .config import LOG, HOME
+from .hints import FAIL, EMPTY, MISS
 from .phrasing import requested_columns
 from .prompt import build_prompt
 from .retrieve import select
 
-MAX_PROMPT_TOKENS, MAX_ROWS = 800, 200
+MAX_PROMPT_TOKENS, MAX_ROWS, TIMEOUT_S = 1000, 200, 15
 FORBID = re.compile(r"\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|replace|merge|call|exec|"
                     r"outfile|dumpfile|load_file|sleep|benchmark|pg_sleep)\b", re.I)
 
@@ -20,7 +21,7 @@ class LlamaGenerator:
             raise SystemExit("llama-cpp-python is not installed. Run:\n  pip install llama-cpp-python "
                              "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu")
         threads = threads or max(1, (os.cpu_count() or 2) // 2)
-        self.llm = Llama(model_path=path, n_ctx=n_ctx, n_threads=threads, n_batch=256, verbose=False)
+        self.llm = Llama(model_path=path, n_ctx=n_ctx, n_threads=8, n_batch=256, verbose=False)
         try:                                   # reuse the processed prompt prefix between questions
             from llama_cpp.llama_cache import LlamaRAMCache
             self.llm.set_cache(LlamaRAMCache(capacity_bytes=256 << 20))
@@ -89,16 +90,20 @@ class Agent:
         tables, notes, terms = list(sel["tables"]), list(sel["notes"]), list(sel["glossary"])
         req = requested_columns(question, self.know, tables)
         low = max(sel["scores"].values(), default=0) <= 0
+        shots = feedback.similar(question, tables)
         while True:
             ctx = [f"- {k}: {gloss[k]['definition']} SQL: {gloss[k]['sql']}" for k in terms]
             ctx += [f"- data note: {n['text']}" for n in notes if n["table"] in tables
                     and (n["kind"] != "join" or n["ref_table"] in tables)]
             if req: ctx.append(f"- requested columns: {', '.join(req)}")
+            ctx += [f"- example: Q: {q} SQL: {sq}" for q, sq in shots]
             if hint: ctx.append(f"- note: {hint}")
             schema = "\n\n".join(prune_ddl(self.know["tables"][t], sel["keep"].get(t)) for t in tables)
             prompt = build_prompt(schema, ctx, question)
             if self._count(prompt) <= MAX_PROMPT_TOKENS: break
-            if any(n["kind"] == "values" for n in notes):
+            if shots:
+                shots = []                                                  # drop examples first
+            elif any(n["kind"] == "values" for n in notes):
                 notes = [n for n in notes if n["kind"] != "values"]       # drop value lists first
             elif len(tables) > 1:
                 tables.remove(min(tables, key=lambda t: sel["scores"].get(t, 0)))
@@ -116,6 +121,12 @@ class Agent:
                 elif d == "postgresql": c.exec_driver_sql("SET TRANSACTION READ ONLY")
             except Exception:
                 pass
+            for stmt in (f"SET SESSION MAX_EXECUTION_TIME={TIMEOUT_S * 1000}", f"SET SESSION max_statement_time={TIMEOUT_S}",
+                         f"SET statement_timeout = {TIMEOUT_S * 1000}"):
+                try:
+                    c.exec_driver_sql(stmt); break
+                except Exception:
+                    continue
             c.exec_driver_sql(("EXPLAIN QUERY PLAN " if d == "sqlite" else "EXPLAIN ") + body)
             res = c.exec_driver_sql(body)
             cols = list(res.keys()); rows = res.fetchmany(MAX_ROWS + 1)
@@ -135,29 +146,33 @@ class Agent:
         for i in range(1, self.max_attempts + 1):
             prompt, tables, low, req = self.make_prompt(question, hint)
             low0 = low0 or (i == 1 and low)
-            sql = clean_sql(self.gen.generate(prompt, temperature=0.0 if i == 1 else 0.2 * (i - 1)))
-            r.sql, r.tables, r.attempts = sql, tables, i
+            raw = self.gen.generate(prompt, temperature=0.0 if i == 1 else 0.2 * (i - 1))
+            r.tables, r.attempts = tables, i
+            if raw.strip().lower().startswith("-- unanswerable"):          # the model says the data cannot answer this
+                r.ok, r.sql, r.confidence = False, "", "low"
+                r.error = raw.strip().split(":", 1)[-1].strip() or "this database has no matching information"
+                best = None
+                break
+            sql = clean_sql(raw)
+            r.sql = sql
             ok, err = validate(sql)
             if ok:
                 try:
                     cols, rows, trunc = self.run_sql(sql)
                     r.columns, r.rows, r.truncated, r.ok, r.error = cols, rows, trunc, True, ""
                     miss = self.missing(req, sql)
-                    if not miss:
-                        r.confidence = "low" if (low0 or i > 1) else "high"
-                        break
-                    if i == self.max_attempts:
-                        r.confidence = "low"
-                        break
-                    best = (sql, cols, rows, trunc, tables, i)
-                    hint = (f"the answer must also include the columns: {', '.join(miss)}. "
-                            f"Previous SQL: {sql} Add them to the SELECT list (and GROUP BY).")
-                    r.ok = False
-                    continue
+                    if best is None or rows or not best[2]:
+                        best = (sql, cols, rows, trunc, tables, i)
+                    if i < self.max_attempts and (not rows or miss):
+                        hint = EMPTY.format(sql=sql) if not rows else MISS.format(cols=", ".join(miss), sql=sql)
+                        r.ok = False
+                        continue
+                    r.confidence = "low" if (low0 or i > 1 or miss or not rows) else "high"
+                    break
                 except Exception as e:
                     err = str(getattr(e, "orig", e))[:300]
             r.error = err
-            hint = f"the previous attempt failed ({err}). Previous SQL: {sql} Write a corrected query."
+            hint = FAIL.format(err=err, sql=sql)
         if not r.ok and best:      # retries failed: fall back to the earlier valid answer
             r.sql, r.columns, r.rows, r.truncated, r.tables, r.attempts = best
             r.ok, r.error, r.confidence = True, "", "low"
@@ -169,7 +184,7 @@ class Agent:
             with open(LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                     "question": question, "sql": r.sql, "ok": r.ok, "error": r.error,
-                                    "attempts": r.attempts, "latency_ms": r.latency_ms, "confidence": r.confidence}) + "\n")
+                                    "attempts": r.attempts, "latency_ms": r.latency_ms, "confidence": r.confidence, "tables": r.tables}) + "\n")
         except Exception:
             pass
         if r.ok:

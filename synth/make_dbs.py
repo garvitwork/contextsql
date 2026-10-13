@@ -62,13 +62,14 @@ def build_meta(key):
             else:
                 c["phys"] = style_name(c["logical"].split("_"), st, T["_prefix"])
                 c["label"] = c["logical"].replace("_", " ")
+                if c["kind"] == "softdel": c["nullable"] = True
             T["cols"].append(c)
     return meta
 
 SQLTYPE = dict(name="VARCHAR(100)", label="VARCHAR(100)", email="VARCHAR(120)", city="VARCHAR(60)", cat="VARCHAR(30)",
-               date="DATE", money="DECIMAL(12,2)", int="INT", code="INT", flag="TINYINT(1)", fk="INT")
+               date="DATE", money="DECIMAL(12,2)", int="INT", code="INT", flag="TINYINT(1)", fk="INT", softdel="DATE", seq="VARCHAR(30)")
 
-def _value(c, rng, n_parent):
+def _value(c, rng, n_parent, i=1):
     k, a = c["kind"], c["args"]
     if k == "name": return f"{rng.choice(FIRST)} {rng.choice(LAST)}"
     if k == "label": return f"{rng.choice(ADJ)} {rng.choice(NOUN)} {rng.randint(1, 99)}"
@@ -81,6 +82,10 @@ def _value(c, rng, n_parent):
         opts = a.split("|"); return rng.choices(opts, weights=[len(opts) - i for i in range(len(opts))])[0]
     if k == "flag": return int(rng.random() < 0.6)
     if k == "fk": return rng.randint(1, n_parent)
+    if k == "softdel":
+        return None if rng.random() < 0.88 else date.today() - timedelta(days=rng.randint(1, int(float(a) * 365)))
+    if k == "seq":
+        opts = a.split("|"); return opts[(i - 1) % len(opts)]
 
 def create_database(conn, key, seed=7):
     rng = random.Random(f"{seed}-{key}")
@@ -93,6 +98,8 @@ def create_database(conn, key, seed=7):
         parents = [c["parent"] for c in T["cols"] if c["kind"] == "fk"]
         depth[lt] = 0 if not parents else 1 + max(depth[p] for p in parents)
         sizes[lt] = [60, 400, 800][min(depth[lt], 2)]
+        _sq = [c for c in T["cols"] if c["kind"] == "seq"]
+        if _sq: sizes[lt] = len(_sq[0]["args"].split("|"))
         defs = [f"{T['pk']} INT PRIMARY KEY"]
         for c in T["cols"]:
             defs.append(f"{c['phys']} {SQLTYPE[c['kind']]}" + ("" if c["nullable"] else " NOT NULL"))
@@ -104,8 +111,8 @@ def create_database(conn, key, seed=7):
         for i in range(1, sizes[lt] + 1):
             row = [i]
             for c in T["cols"]:
-                v = None if (c["nullable"] and rng.random() < nulls[c["phys"]]) else _value(
-                    c, rng, sizes.get(c.get("parent"), 1))
+                v = None if (c["nullable"] and c["kind"] != "softdel" and rng.random() < nulls[c["phys"]]) else _value(
+                    c, rng, sizes.get(c.get("parent"), 1), i)
                 row.append(v)
             rows.append(row)
         ph = ", ".join(["%s"] * (len(T["cols"]) + 1))

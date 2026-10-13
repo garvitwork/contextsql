@@ -10,3 +10,4 @@ context_mysql/
 /adapter
 kaggle_api.png
 "*.safetensors" 
+context_mysql_env/

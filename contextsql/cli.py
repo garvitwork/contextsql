@@ -1,11 +1,21 @@
 """contextsql connect | learn | ask | glossary | status"""
-import argparse, getpass, os, sys
+import shlex
+import argparse, getpass, json, os, sys
 from pathlib import Path
 from . import glossary as gl
 from .config import CONFIG, KNOW, LOG, load_json, save_json
 from .db import make_url, get_engine
 
-DEFAULT_MODEL = "models/contextsql-q4_k_m.gguf"
+HF_REPO = "Garvitarunav/contextsql-v4"
+HF_FILE = "contextsql-v4-q4_k_m.gguf"
+
+def default_model():
+    p = Path("models/contextsql-q4_k_m.gguf")
+    if p.exists():
+        return str(p.resolve())
+    from huggingface_hub import hf_hub_download
+    print("Downloading model (1.8 GB, first time only) ...")
+    return hf_hub_download(HF_REPO, HF_FILE)
 
 def need(path, hint):
     obj = load_json(path)
@@ -30,9 +40,9 @@ def cmd_connect(a):
             c.exec_driver_sql("SELECT 1")
     except Exception as e:
         sys.exit(f"Could not connect: {getattr(e, 'orig', e)}")
-    model = a.model or (str(Path(DEFAULT_MODEL).resolve()) if Path(DEFAULT_MODEL).exists() else "")
+    model = a.model or default_model()
     save_json(CONFIG, {"url": url, "model": model})
-    print("Connected and saved." + ("" if model else "\nNo model found - pass --model path\\to\\contextsql-q4_k_m.gguf"))
+    print("Connected and saved.")
     print("Next: contextsql learn")
 
 def cmd_learn(a):
@@ -72,7 +82,8 @@ def cmd_ask(a):
     cfg = need(CONFIG, "contextsql connect")
     know = need(KNOW, "contextsql learn")
     if not cfg.get("model") or not Path(cfg["model"]).exists():
-        sys.exit("Model file not found. Run: contextsql connect --model path\\to\\contextsql-q4_k_m.gguf")
+        cfg["model"] = default_model()
+        save_json(CONFIG, cfg)
     print("Loading model ...")
     agent = Agent(get_engine(cfg["url"]), know, LlamaGenerator(cfg["model"], threads=a.threads))
     q = " ".join(a.question).strip()
@@ -82,6 +93,15 @@ def cmd_ask(a):
     while True:
         q = input("\n> ").strip()
         if not q: break
+        if q.lower() in ("cls", "clear", "/cls", "/clear"):
+            os.system("cls" if os.name == "nt" else "clear"); continue
+        if q.startswith("/") or q.startswith("contextsql "):
+            try: 
+                cmd = q[1:] if q.startswith("/") else q[11:]
+                main(["fix", cmd[4:].strip()] if cmd.startswith("fix ") else shlex.split(cmd))
+            except SystemExit as e: 
+                print(e.code if isinstance(e.code, str) else "")
+            continue
         show(agent.ask(q))
 
 def cmd_glossary(a):
@@ -96,6 +116,34 @@ def cmd_glossary(a):
         for k, g in {**auto, **gl.load()}.items():
             tag = " (auto)" if k in auto and k not in gl.load() else ""
             print(f"- {k}{tag}: {g['definition']}\n    SQL: {g['sql']}  tables: {', '.join(g['tables'])}")
+
+def _last():
+    try:
+        return json.loads(open(LOG, encoding="utf-8").read().strip().splitlines()[-1])
+    except Exception:
+        sys.exit("No previous question found - ask something first.")
+
+def cmd_good(a):
+    from . import feedback
+    e = _last()
+    if not e.get("ok"):
+        sys.exit('The last answer did not succeed. Use: contextsql fix "SELECT ..."')
+    feedback.save(e["question"], e["sql"], e.get("tables", []))
+    print("Saved. It will be used as an example for similar questions.")
+
+def cmd_fix(a):
+    from . import feedback
+    from .agent import Agent, validate, clean_sql
+    e, sql = _last(), clean_sql(" ".join(a.sql))
+    ok, err = validate(sql)
+    if not ok: sys.exit(f"Not saved: {err}")
+    cfg = need(CONFIG, "contextsql connect")
+    try:
+        Agent(get_engine(cfg["url"]), None, None).run_sql(sql)
+    except Exception as ex:
+        sys.exit(f"Not saved - that SQL does not run: {getattr(ex, 'orig', ex)}")
+    feedback.save(e["question"], sql, e.get("tables", []))
+    print("Saved your corrected SQL for that question.")
 
 def cmd_status(a):
     cfg, know = load_json(CONFIG), load_json(KNOW)
@@ -117,6 +165,8 @@ def main(argv=None):
     g.add_argument("action", choices=["add", "list", "remove"], nargs="?", default="list")
     g.add_argument("term", nargs="?"); g.add_argument("definition", nargs="?"); g.add_argument("sql", nargs="?")
     g.add_argument("--tables")
+    s.add_parser("good").set_defaults(fn=cmd_good)
+    f = s.add_parser("fix"); f.add_argument("sql", nargs="+"); f.set_defaults(fn=cmd_fix)
     s.add_parser("status").set_defaults(fn=cmd_status)
     a = p.parse_args(argv)
     a.fn(a)
